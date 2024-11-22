@@ -1,0 +1,4 @@
+{
+    "port": 4000,
+    "targetServer": "http://localhost:5000"
+}  

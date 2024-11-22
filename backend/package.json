@@ -6,15 +6,20 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start:test-server": "node tests/test-server.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "config": "^3.3.12",
     "express": "^4.21.1",
-    "http-proxy": "^1.18.1"
+    "http-proxy": "^1.18.1",
+    "http-proxy-middleware": "^3.0.3"
   },
   "devDependencies": {
     "jest": "^29.7.0",
