@@ -2,10 +2,15 @@ const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const config = require('config');
 const logs = require('./logs');
+const cors = require('cors');
+const axios = require('axios');
+const bodyParser = require('body-parser');
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(bodyParser.json());
 
 const PORT = config.get('port');
 const TARGET_SERVER = config.get('targetServer');
@@ -25,16 +30,12 @@ app.use((req, res, next) => {
         body: req.body, // If body is parsed
     };
 
-    console.log('Log Entry Initialized:', logEntry);
-
     // Hook into res.send
     const originalSend = res.send;
     res.send = function (body) {
         logEntry.status = res.statusCode;
         logEntry.responseHeaders = res.getHeaders();
         logEntry.responseBody = body;
-
-        console.log('Log Entry Ready to Add:', logEntry);
 
         logs.addLog(logEntry);
 
@@ -49,8 +50,6 @@ app.use((req, res, next) => {
             logEntry.responseHeaders = res.getHeaders();
             logEntry.responseBody = chunk ? chunk.toString() : null;
 
-            console.log('Log Entry Ready to Add (via end):', logEntry);
-
             logs.addLog(logEntry);
         }
 
@@ -58,6 +57,42 @@ app.use((req, res, next) => {
     };
 
     next();
+});
+
+// Replay endpoint
+app.post('/replay', async (req, res) => {
+  const { method, url, headers, body } = req.body;
+
+  if (!method || !url) {
+    return res.status(400).json({ error: 'Missing required fields: method and url' });
+  }
+
+  try {
+    // Replay the request
+    const response = await axios({
+      method,
+      url,
+      headers,
+      data: body, // Use `data` for POST/PUT request bodies
+    });
+
+    // Send the replayed response back
+    res.status(200).json({
+      status: response.status,
+      headers: response.headers,
+      body: response.data,
+    });
+  } catch (error) {
+    console.error('Replay error:', error.message);
+
+    // Handle replay errors
+    res.status(error.response?.status || 500).json({
+      error: error.message,
+      status: error.response?.status,
+      headers: error.response?.headers,
+      body: error.response?.data,
+    });
+  }
 });
 
 // Proxy middleware
