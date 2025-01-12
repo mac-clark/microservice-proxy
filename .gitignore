@@ -50,3 +50,4 @@ docker-compose.override.yaml
 *.tmp
 *.log
 *.cache
+*.ico
