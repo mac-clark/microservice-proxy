@@ -35,6 +35,10 @@ export default {
   },
   methods: {
     async checkPortAvailability() {
+      if (!this.targetPort || isNaN(this.targetPort)) {
+        alert('Please enter a valid port number.');
+        return;
+      }
       try {
         const response = await fetch(
           `http://localhost:4000/check-port?port=${this.targetPort}`
@@ -49,6 +53,10 @@ export default {
       }
     },
     async updateTarget() {
+      if (!this.targetPort || isNaN(this.targetPort)) {
+        alert('Please enter a valid port number before updating the target.');
+        return;
+      }
       try {
         const response = await fetch('http://localhost:4000/update-target', {
           method: 'POST',
@@ -56,19 +64,29 @@ export default {
           body: JSON.stringify({ port: this.targetPort }),
         });
         const data = await response.json();
-        alert(data.message); // Notify the user of the update
-        this.fetchCurrentTarget(); // Refresh the displayed current target
+        if (response.ok) {
+          alert(data.message); // Notify the user of the update
+          this.fetchCurrentTarget(); // Refresh the displayed current target
+        } else {
+          alert(data.error || 'Failed to update the target.');
+        }
       } catch (error) {
         console.error('Error updating target port:', error);
+        alert('Error updating target port. Please check the console for details.');
       }
     },
     async fetchCurrentTarget() {
       try {
         const response = await fetch('http://localhost:4000/current-target');
-        const data = await response.json();
-        this.currentTarget = data.target; // Set the current target port
+        if (response.ok) {
+          const data = await response.json();
+          this.currentTarget = data.target; // Set the current target port
+        } else {
+          console.error('Failed to fetch current target port:', response.statusText);
+        }
       } catch (error) {
         console.error('Error fetching current target port:', error);
+        this.currentTarget = null;
       }
     },
   },
