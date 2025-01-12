@@ -22,7 +22,8 @@
     "cors": "^2.8.5",
     "express": "^4.21.1",
     "http-proxy": "^1.18.1",
-    "http-proxy-middleware": "^3.0.3"
+    "http-proxy-middleware": "^3.0.3",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",

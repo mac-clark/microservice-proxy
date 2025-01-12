@@ -1,10 +1,10 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const config = require('config');
-const logs = require('./logs');
 const cors = require('cors');
-const axios = require('axios');
 const bodyParser = require('body-parser');
+const logs = require('./logs');
+const { initializeWebSocketServer, broadcastNewLog } = require('../config/ws');
 
 const app = express();
 app.use(cors());
@@ -13,102 +13,104 @@ app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
 const PORT = config.get('port');
-const TARGET_SERVER = config.get('targetServer');
 
-// Expose logs via an API endpoint
-app.get('/logs', (req, res) => {
-    res.json(logs.getLogs());
-});
+// Import routes
+const logsRoutes = require('../routes/logs');
+const targetRoutes = require('../routes/target');
+const replayRoutes = require('../routes/replay');
+
+// Use modularized routes
+app.use(logsRoutes);
+app.use(targetRoutes);
+app.use(replayRoutes);
 
 // Logging middleware
 app.use((req, res, next) => {
-    const logEntry = {
-        timestamp: new Date().toISOString(),
-        method: req.method,
-        url: req.url,
-        headers: req.headers,
-        body: req.body, // If body is parsed
-    };
+  console.log(`[LOGGING MIDDLEWARE] Incoming request: ${req.method} ${req.url}`);
+  const excludedPaths = ['/current-target', '/check-port', '/update-target'];
 
-    // Hook into res.send
-    const originalSend = res.send;
-    res.send = function (body) {
-        logEntry.status = res.statusCode;
-        logEntry.responseHeaders = res.getHeaders();
-        logEntry.responseBody = body;
-
-        logs.addLog(logEntry);
-
-        return originalSend.apply(res, arguments);
-    };
-
-    // Hook into res.end
-    const originalEnd = res.end;
-    res.end = function (chunk, encoding) {
-        if (!logEntry.status) {
-            logEntry.status = res.statusCode;
-            logEntry.responseHeaders = res.getHeaders();
-            logEntry.responseBody = chunk ? chunk.toString() : null;
-
-            logs.addLog(logEntry);
-        }
-
-        originalEnd.apply(res, arguments);
-    };
-
-    next();
-});
-
-// Replay endpoint
-app.post('/replay', async (req, res) => {
-  const { method, url, headers, body } = req.body;
-
-  if (!method || !url) {
-    return res.status(400).json({ error: 'Missing required fields: method and url' });
+  if (excludedPaths.includes(req.path)) {
+    return next();
   }
 
-  try {
-    // Replay the request
-    const response = await axios({
-      method,
-      url,
-      headers,
-      data: body, // Use `data` for POST/PUT request bodies
-    });
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    method: req.method,
+    url: req.url,
+    headers: req.headers,
+    body: req.body,
+  };
 
-    // Send the replayed response back
-    res.status(200).json({
-      status: response.status,
-      headers: response.headers,
-      body: response.data,
-    });
-  } catch (error) {
-    console.error('Replay error:', error.message);
+  const originalSend = res.send;
+  res.send = function (body) {
+    logEntry.status = res.statusCode;
+    logEntry.responseHeaders = res.getHeaders();
+    logEntry.responseBody = body;
 
-    // Handle replay errors
-    res.status(error.response?.status || 500).json({
-      error: error.message,
-      status: error.response?.status,
-      headers: error.response?.headers,
-      body: error.response?.data,
-    });
-  }
+    logs.addLog(logEntry);
+    broadcastNewLog(logEntry); // Broadcast the log to WebSocket clients
+    console.log('Logged request:', logEntry);
+
+    return originalSend.apply(res, arguments);
+  };
+
+  next();
 });
-
-// Proxy middleware
-app.use(
-    '/',
-    createProxyMiddleware({
-        target: TARGET_SERVER,
-        changeOrigin: true,
-        onError: (err, req, res) => {
-            console.error('Proxy error:', err.message);
-            res.status(502).send('Bad Gateway: Unable to reach target server.');
-        },
-    })
-);
 
 // Start the proxy server
-app.listen(PORT, () => {
-    console.log(`Proxy server is running on http://localhost:${PORT}`);
+const server = app.listen(PORT, () => {
+  console.log(`Proxy server is running on http://localhost:${PORT}`);
 });
+
+// Initialize WebSocket server
+initializeWebSocketServer(server);
+
+// Proxy middleware with script injection
+app.use(
+  '/',
+  createProxyMiddleware({
+    target: config.get('targetServer'),
+    changeOrigin: true,
+    router: () => config.get('targetServer'),
+    onProxyReq: (proxyReq, req) => {
+      console.log(`[PROXY] Forwarding ${req.method} request to ${config.get('targetServer')}${req.url}`);
+      if (req.body && ['POST', 'PUT', 'PATCH'].includes(req.method)) {
+        const bodyData = JSON.stringify(req.body);
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+        proxyReq.write(bodyData);
+      }
+    },
+    onProxyRes: (proxyRes, req, res) => {
+      if (proxyRes.headers['content-type'] && proxyRes.headers['content-type'].includes('text/html')) {
+        let body = '';
+
+        proxyRes.on('data', (chunk) => {
+          body += chunk;
+        });
+
+        proxyRes.on('end', () => {
+          const script = `
+            <script>
+              const socket = new WebSocket('ws://localhost:${PORT}');
+              ['log', 'error', 'warn'].forEach(level => {
+                const original = console[level];
+                console[level] = function(...args) {
+                  socket.send(JSON.stringify({ type: 'console', level, message: args.join(' '), timestamp: new Date().toISOString() }));
+                  original.apply(console, args);
+                };
+              });
+            </script>
+          `;
+          const modifiedBody = body.replace('</body>', `${script}</body>`);
+          res.setHeader('Content-Length', Buffer.byteLength(modifiedBody));
+          res.end(modifiedBody);
+        });
+      }
+    },
+    onError: (err, req, res) => {
+      console.error(`[PROXY ERROR] ${err.message}`);
+      res.status(502).send('Bad Gateway: Unable to reach target server.');
+    },
+  })
+);
