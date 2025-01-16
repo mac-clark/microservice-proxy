@@ -121,8 +121,6 @@ logjam/
 ├── backend/               # Backend proxy service
 ├── frontend/              # Frontend Vue.js dashboard
 ├── debug-agent/           # Debug Agent module
-├── docker/                # Docker configurations (optional)
-├── docs/                  # Documentation and guides
 ├── .gitignore             # Git ignore file
 ├── LICENSE                # License file
 └── README.md              # Project overview
